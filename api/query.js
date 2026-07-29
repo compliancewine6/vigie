@@ -5,21 +5,20 @@
 import { db, requireAdmin } from '../lib/db.js';
 
 async function tableFor(target) {
-  // target: {jurisdiction} | {client_id} | {appellation_id} | {jurisdiction, client_id}
+  // target: {jurisdiction} | {client_id} | {appellation_id} | {jurisdiction, client_id} [+ process_stage]
+  let data;
   if (target.jurisdiction && target.client_id) {
-    const { data, error } = await db.rpc('get_country_client_matrix',
+    const r = await db.rpc('get_country_client_matrix',
       { p_jurisdiction: target.jurisdiction, p_client: target.client_id });
-    if (error) throw error;
-    return data;
-  }
-  if (target.appellation_id) {
-    const { data, error } = await db.from('v_requirements_table').select('*')
+    if (r.error) throw r.error;
+    data = r.data;
+  } else if (target.appellation_id) {
+    const r = await db.from('v_requirements_table').select('*')
       .eq('origin', 'appellation').eq('appellation_id', target.appellation_id)
       .order('sort_order').order('parameter');
-    if (error) throw error;
-    return data;
-  }
-  if (target.client_id) {
+    if (r.error) throw r.error;
+    data = r.data;
+  } else if (target.client_id) {
     // Exigences propres au client + exigences de sa holding cochées pour lui
     const { data: scoped } = await db.from('requirement_scope')
       .select('requirement_id').eq('client_id', target.client_id);
@@ -29,15 +28,21 @@ async function tableFor(target) {
     q = ids.length
       ? q.or(`client_id.eq.${target.client_id},id.in.(${ids.join(',')})`)
       : q.eq('client_id', target.client_id);
-    const { data, error } = await q;
-    if (error) throw error;
-    return data;
+    const r = await q;
+    if (r.error) throw r.error;
+    data = r.data;
+  } else {
+    const r = await db.from('v_requirements_table').select('*')
+      .eq('origin', 'country').eq('jurisdiction', target.jurisdiction)
+      .order('sort_order').order('parameter');
+    if (r.error) throw r.error;
+    data = r.data;
   }
-  const { data, error } = await db.from('v_requirements_table').select('*')
-    .eq('origin', 'country').eq('jurisdiction', target.jurisdiction)
-    .order('sort_order').order('parameter');
-  if (error) throw error;
-  return data;
+  // Filtre "stade opérationnel" (vrac/matieres_seches/mise_en_bouteille/
+  // analyses/logistique/administratif) — appliqué en mémoire pour rester
+  // uniforme sur les 4 chemins ci-dessus (dont un RPC), plutôt que de
+  // dupliquer la logique de filtre dans chaque branche.
+  return target.process_stage ? data.filter(r => r.process_stage === target.process_stage) : data;
 }
 
 export default async function handler(req, res) {
@@ -49,11 +54,12 @@ export default async function handler(req, res) {
       return res.json(await tableFor({
         jurisdiction: req.query.jurisdiction || undefined,
         client_id: req.query.client_id || undefined,
-        appellation_id: req.query.appellation_id || undefined
+        appellation_id: req.query.appellation_id || undefined,
+        process_stage: req.query.process_stage || undefined
       }));
     }
 
-    // Comparateur : body {targets:[{label, jurisdiction?, client_id?}, ...]} (2 ou 3)
+    // Comparateur : body {targets:[{label, jurisdiction?, client_id?, process_stage?}, ...]} (2 ou 3)
     if (action === 'compare' && req.method === 'POST') {
       const { targets } = req.body;
       const tables = await Promise.all(targets.map(tableFor));

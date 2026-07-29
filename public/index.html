@@ -28,6 +28,16 @@
   .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; background:#eee; }
   .badge.validated { background:#e5f2e6; color:var(--ok); }
   .badge.ai { background:#fff3e0; color:var(--warn); }
+  /* Badges "stade opérationnel" — une couleur par stade pour un repérage
+     visuel rapide dans les tables, cohérent partout (table + filtres). */
+  .stage { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .stage-vrac { background:#f3e8d8; color:#8a5a1f; }
+  .stage-matieres_seches { background:#e3ecf7; color:#2c5282; }
+  .stage-mise_en_bouteille { background:#e6f0e9; color:#276749; }
+  .stage-analyses { background:#f3e5f5; color:#7b2d8e; }
+  .stage-logistique { background:#fdecea; color:#a13a2a; }
+  .stage-administratif { background:#ececec; color:#5a5347; }
+  .stage-none { background:#f5f3ef; color:#a89f92; }
   .diffcell.diff { background:#fdecea; }
   #dropzone { border:2px dashed var(--line); border-radius:10px; padding:34px; text-align:center; color:#8b8175; cursor:pointer; }
   #dropzone.drag { border-color:var(--accent); background:#fdf7f8; }
@@ -57,6 +67,7 @@
 <section id="tab-pays">
   <div class="card row">
     <div><label>Pays / juridiction</label><select id="paysSel"></select></div>
+    <div><label>Stade opérationnel</label><select id="paysStage"></select></div>
     <button class="btn" onclick="loadPays()">Afficher</button>
     <div><label>Filtre source (mode économe, optionnel)</label><input id="paysSourceFilter" placeholder="ex: Décret 2012-655" style="width:220px"></div>
     <span style="flex:1"></span>
@@ -97,7 +108,9 @@
     </div>
     <div id="libTable"></div>
   </div>
-  <div class="card"><b>Spécifications du client</b><div id="clientTable" class="muted" style="margin-top:8px">Choisir un client puis filtrer.</div>
+  <div class="card"><b>Spécifications du client</b>
+    <div class="row" style="margin:8px 0"><div><label>Stade opérationnel</label><select id="clientStage"></select></div></div>
+    <div id="clientTable" class="muted">Choisir un client puis filtrer.</div>
     <button class="btn sec" style="margin-top:10px" onclick="loadClientTable()">Afficher la table de spécifications</button></div>
 </section>
 
@@ -106,6 +119,7 @@
   <div class="card row">
     <div><label>Pays</label><select id="cpPays"></select></div>
     <div><label>Client</label><select id="cpClient"></select></div>
+    <div><label>Stade opérationnel</label><select id="cpStage"></select></div>
     <button class="btn" onclick="loadCouple()">Tout ce qu'il faut respecter</button>
   </div>
   <div class="card"><div id="coupleTable" class="muted">Exigences pays + exigences client fusionnées, triées par section.</div></div>
@@ -215,16 +229,33 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   if (b.dataset.tab === 'client') { loadClientsAdmin(); loadLibrary(); }
 });
 
+// --- Stade opérationnel : libellés d'affichage + options de filtre partagées ---
+const STAGE_LABELS = {
+  vrac: 'Vrac', matieres_seches: 'Matières sèches', mise_en_bouteille: 'Mise en bouteille',
+  analyses: 'Analyses', logistique: 'Logistique', administratif: 'Administratif'
+};
+function stageOptions() {
+  return '<option value="">Tous les stades</option>' +
+    Object.entries(STAGE_LABELS).map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+}
+function stageBadge(stage) {
+  return stage
+    ? `<span class="stage stage-${stage}">${STAGE_LABELS[stage] || stage}</span>`
+    : '<span class="stage stage-none">—</span>';
+}
+document.querySelectorAll('#paysStage, #clientStage, #cpStage').forEach(s => s.innerHTML = stageOptions());
+
 // --- Rendu commun : table de spécifications par section (format unique) ---
 function renderTable(rows, el) {
   if (!rows?.length) { el.innerHTML = '<span class="muted">Aucune exigence active.</span>'; return; }
-  let html = '<table><tr><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>S\'applique à</th><th>Date d\'appl.</th><th>Source</th><th></th></tr>';
+  let html = '<table><tr><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>S\'applique à</th><th>Stade</th><th>Date d\'appl.</th><th>Source</th><th></th></tr>';
   let cur = null;
   for (const r of rows) {
-    if (r.section !== cur) { cur = r.section; html += `<tr class="section-head"><td colspan="7">${cur}</td></tr>`; }
+    if (r.section !== cur) { cur = r.section; html += `<tr class="section-head"><td colspan="8">${cur}</td></tr>`; }
     const lim = r.limit_value != null ? `${r.operator||''} ${r.limit_value} ${r.unit||''}` : (r.operator||'—');
     const mt = r.mandatory_test === true ? ' <span class="badge" style="background:#fdecea;color:var(--accent)" title="Analyse/déclaration obligatoire, indépendamment du résultat">analyse obligatoire</span>' : '';
     html += `<tr><td><b>${r.parameter}</b>${mt}</td><td>${r.requirement}</td><td>${lim}</td><td>${r.applies_to||'—'}</td>
+      <td>${stageBadge(r.process_stage)}</td>
       <td>${r.effective_date||'—'}</td>
       <td class="src">${r.source_url?`<a href="${r.source_url}" target="_blank">${r.source_name||'source'} ↗</a>`:(r.source_name||'—')}<br><span class="muted">${r.source_ref||''}</span></td>
       <td><span class="badge ${r.confidence==='validated'?'validated':'ai'}">${r.confidence==='validated'?'validé':'IA'}</span>
@@ -258,7 +289,7 @@ async function initSelectors() {
 }
 $('#adminKey').addEventListener('keydown', e => { if (e.key === 'Enter') initSelectors(); });
 $('#adminKey').addEventListener('blur', () => { if ($('#adminKey').value) initSelectors(); });
-async function loadPays() { renderTable(await api(`/api/query?action=table&jurisdiction=${$('#paysSel').value}`), $('#paysTable')); }
+async function loadPays() { renderTable(await api(`/api/query?action=table&jurisdiction=${$('#paysSel').value}&process_stage=${$('#paysStage').value}`), $('#paysTable')); }
 async function runWatch() {
   $('#paysTable').innerHTML = 'Veille en cours… (peut prendre quelques minutes)';
   const filter = $('#paysSourceFilter').value.trim();
@@ -378,11 +409,11 @@ async function loadLibrary() {
     docs.filter(d => d.status==='active').map(d => `<option value="${d.id}">${d.normalized_filename}</option>`).join('');
 }
 async function dl(id) { const { url } = await api(`/api/documents?action=download&id=${id}`); window.open(url); }
-async function loadClientTable() { renderTable(await api(`/api/query?action=table&client_id=${$('#clientSel').value}`), $('#clientTable')); }
+async function loadClientTable() { renderTable(await api(`/api/query?action=table&client_id=${$('#clientSel').value}&process_stage=${$('#clientStage').value}`), $('#clientTable')); }
 
 // --- Outil 1 : couple ---
 async function loadCouple() {
-  renderTable(await api(`/api/query?action=table&jurisdiction=${$('#cpPays').value}&client_id=${$('#cpClient').value}`), $('#coupleTable'));
+  renderTable(await api(`/api/query?action=table&jurisdiction=${$('#cpPays').value}&client_id=${$('#cpClient').value}&process_stage=${$('#cpStage').value}`), $('#coupleTable'));
 }
 
 // --- Outil 2 : comparateur ---
@@ -425,9 +456,10 @@ async function loadPending() {
   if (rows?.error) { $('#pendingTable').innerHTML = `<span style="color:var(--warn)">Erreur : ${rows.error}</span>`; return; }
   if (!Array.isArray(rows)) { $('#pendingTable').innerHTML = '<span style="color:var(--warn)">Réponse inattendue du serveur — regarde la console (F12) et dis-le-moi.</span>'; return; }
   $('#pendingTable').innerHTML = !rows.length ? '<span class="muted">Rien en attente.</span>' :
-    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th><th>Origine</th><th>Section</th><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>Réf. source</th></tr>' +
+    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th><th>Origine</th><th>Section</th><th>Stade</th><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>Réf. source</th></tr>' +
     rows.map(r => `<tr><td><input type="checkbox" class="pk" value="${r.id}"></td>
       <td>${r.origin==='country'?r.jurisdiction:r.origin==='appellation'?(r.appellations?.name||'appellation'):(r.clients?.name||'client')}</td><td>${r.sections?.label||r.section_id}</td>
+      <td>${stageBadge(r.process_stage)}</td>
       <td><b>${r.parameter}</b></td><td>${r.requirement}</td>
       <td>${r.limit_value!=null?`${r.operator||''} ${r.limit_value} ${r.unit||''}`:'—'}</td><td class="muted">${r.source_ref}</td></tr>`).join('') + '</table>';
 }

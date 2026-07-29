@@ -21,7 +21,7 @@ Workflow qualité : scan IA → proposition → **validation humaine** → consu
 ## Déploiement (une fois)
 
 1. **Supabase** : créer un nouveau projet (séparé de Clos) →
-   - SQL Editor : exécuter dans l'ordre `supabase/schema.sql`, `supabase/seed_sources.sql`, `supabase/seed_pilot.sql`, `supabase/schema_v2.sql`, `supabase/seed_press_sources.sql`, `supabase/seed_context_sources.sql`, `supabase/seed_sources_fr.sql`, `supabase/schema_v3.sql`, `supabase/seed_sources_v3.sql`, `supabase/schema_v4.sql`, `supabase/seed_sources_v4.sql`, `supabase/seed_context_sources_v2.sql`, `supabase/seed_sources_v5.sql`, `supabase/seed_context_sources_v3.sql`, `supabase/schema_v5.sql`, `supabase/seed_horizon_sources.sql`, `supabase/seed_sources_v6.sql`
+   - SQL Editor : exécuter dans l'ordre `supabase/schema.sql`, `supabase/seed_sources.sql`, `supabase/seed_pilot.sql`, `supabase/schema_v2.sql`, `supabase/seed_press_sources.sql`, `supabase/seed_context_sources.sql`, `supabase/seed_sources_fr.sql`, `supabase/schema_v3.sql`, `supabase/seed_sources_v3.sql`, `supabase/schema_v4.sql`, `supabase/seed_sources_v4.sql`, `supabase/seed_context_sources_v2.sql`, `supabase/seed_sources_v5.sql`, `supabase/seed_context_sources_v3.sql`, `supabase/schema_v5.sql`, `supabase/seed_horizon_sources.sql`, `supabase/seed_sources_v6.sql`, `supabase/schema_v6.sql`
    - Storage : créer 2 buckets privés `snapshots` et `client-docs`
 2. **GitHub** : nouveau repo, pousser ce dossier.
 3. **Vercel** : importer le repo, variables d'environnement :
@@ -43,6 +43,12 @@ Aucun code si le format de source est déjà géré : `INSERT INTO jurisdictions
 - Supabase + Vercel : paliers gratuits suffisants au départ.
 
 Le "refresh à la demande payant" (V2 monétisation) est trivial à brancher : l'endpoint `POST /api/watch?trigger=manual` est déjà séparé du cron.
+
+## Filtre qualité d'extraction + stade opérationnel (`schema_v6.sql`)
+
+Le prompt d'extraction (`lib/extract.js`) applique désormais un filtre obligatoire à 2 questions avant de créer une ligne d'exigence : (1) ça s'applique au vin et ce n'est pas automatiquement respecté (ex: un ingrédient jamais utilisé en vinification ne compte pas), et (2) ça implique une action concrète des équipes (document à produire, analyse à faire, ingrédient/matière sèche à utiliser ou proscrire, mention d'étiquette, seuil chiffré) — un principe générique sans traduction opérationnelle est ignoré. Objectif : moins de lignes, mais toutes actionnables et vérifiables.
+
+Chaque exigence porte aussi un `process_stage` (vrac / matieres_seches / mise_en_bouteille / analyses / logistique / administratif), orthogonal à la section (qui décrit le TYPE d'exigence) — il décrit QUAND/OÙ elle s'applique dans le process. Filtrable dans les onglets Veille pays, Veille client et Couple pays × client, et affiché en badge coloré partout (y compris Validation qualité).
 
 ## Structure
 
