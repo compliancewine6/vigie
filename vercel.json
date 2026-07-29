@@ -1,0 +1,15 @@
+{
+  "crons": [
+    { "path": "/api/watch?trigger=scheduled", "schedule": "0 6 1 * *" },
+    { "path": "/api/cron-weekly", "schedule": "0 6 * * 1" }
+  ],
+  "functions": {
+    "api/watch.js": { "maxDuration": 300 },
+    "api/documents.js": { "maxDuration": 300 },
+    "api/alerts.js": { "maxDuration": 300 },
+    "api/context.js": { "maxDuration": 60 },
+    "api/appellations.js": { "maxDuration": 120 },
+    "api/horizon.js": { "maxDuration": 120 },
+    "api/cron-weekly.js": { "maxDuration": 300 }
+  }
+}

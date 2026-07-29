@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vigie — Veille réglementaire vin</title>
+<style>
+  :root { --bg:#f7f5f2; --card:#fff; --ink:#2b2620; --accent:#7a1f2b; --line:#e5e0d8; --ok:#2e7d32; --warn:#e65100; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--accent); color:#fff; padding:14px 24px; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:19px; margin:0; font-weight:600; }
+  nav { display:flex; gap:4px; margin-left:24px; }
+  nav button { background:transparent; border:0; color:#f3d9dc; padding:8px 14px; cursor:pointer; font-size:14px; border-radius:6px 6px 0 0; }
+  nav button.active { background:var(--bg); color:var(--accent); font-weight:600; }
+  main { padding:20px 24px; max-width:1240px; margin:auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:18px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+  label { font-size:12px; color:#6b6257; display:block; margin-bottom:3px; }
+  select,input[type=text],input[type=date],input[type=password] { padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:14px; background:#fff; min-width:180px; }
+  button.btn { background:var(--accent); color:#fff; border:0; padding:9px 16px; border-radius:6px; cursor:pointer; font-size:14px; }
+  button.btn.sec { background:#fff; color:var(--accent); border:1px solid var(--accent); }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; }
+  th,td { border-bottom:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#faf8f5; font-weight:600; position:sticky; top:0; }
+  tr.section-head td { background:#f0ebe3; font-weight:700; color:var(--accent); }
+  .src a { color:#8a6d3b; font-size:12px; text-decoration:none; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; background:#eee; }
+  .badge.validated { background:#e5f2e6; color:var(--ok); }
+  .badge.ai { background:#fff3e0; color:var(--warn); }
+  .diffcell.diff { background:#fdecea; }
+  #dropzone { border:2px dashed var(--line); border-radius:10px; padding:34px; text-align:center; color:#8b8175; cursor:pointer; }
+  #dropzone.drag { border-color:var(--accent); background:#fdf7f8; }
+  .muted { color:#8b8175; font-size:12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🍇 Vigie</h1>
+  <nav>
+    <button data-tab="pays" class="active">Veille pays</button>
+    <button data-tab="client">Veille client</button>
+    <button data-tab="couple">Couple pays × client</button>
+    <button data-tab="compare">Comparateur</button>
+    <button data-tab="appellations">Appellations</button>
+    <button data-tab="validation">Validation qualité</button>
+    <button data-tab="alerts">Alertes presse</button>
+    <button data-tab="horizon">Horizon (à venir)</button>
+  </nav>
+  <span style="flex:1"></span>
+  <input type="password" id="adminKey" placeholder="Clé admin (puis Entrée)" style="min-width:180px">
+  <span id="authStatus" style="color:#f3d9dc;font-size:12px;min-width:150px">non connecté</span>
+</header>
+<main>
+
+<!-- ============ ONGLET 1 : VEILLE PAYS ============ -->
+<section id="tab-pays">
+  <div class="card row">
+    <div><label>Pays / juridiction</label><select id="paysSel"></select></div>
+    <button class="btn" onclick="loadPays()">Afficher</button>
+    <div><label>Filtre source (mode économe, optionnel)</label><input id="paysSourceFilter" placeholder="ex: Décret 2012-655" style="width:220px"></div>
+    <span style="flex:1"></span>
+    <button class="btn sec" onclick="runWatch()">⟳ Lancer la veille maintenant</button>
+    <span class="muted">Mise à jour auto : le 1er de chaque mois</span>
+  </div>
+  <div class="card"><div id="paysTable" class="muted">Choisir un pays.</div></div>
+</section>
+
+<!-- ============ ONGLET 2 : VEILLE CLIENT ============ -->
+<section id="tab-client" hidden>
+  <div class="card">
+    <b>Clients</b>
+    <div class="muted" style="margin-bottom:8px">Table vide au départ (données commerciales propres à AdVini, jamais présumées) — crée tes clients ici avant de déposer un document.</div>
+    <div class="row" style="margin-bottom:10px">
+      <div><label>Nom du client</label><input id="newClientName" placeholder="ex: Aldi France"></div>
+      <div><label>Appartient à (holding, optionnel)</label><select id="newClientParent"><option value="">— aucun (client racine) —</option></select></div>
+      <div><label>Pays principal (optionnel)</label><input id="newClientCountry" placeholder="ex: FR" style="width:80px"></div>
+      <button class="btn" onclick="createClient()">+ Créer le client</button>
+    </div>
+    <div id="clientsAdminTable"></div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:12px">
+      <div><label>Client</label><select id="clientSel"></select></div>
+      <div><label>Remplace un document existant ? (V2 → archive V1 — ignoré en dépôt multiple)</label><select id="replacesSel"><option value="">Non — nouveau document</option></select></div>
+      <div><label>Date de mise en application (sinon détectée par IA)</label><input type="date" id="effDate"></div>
+    </div>
+    <div id="dropzone">Déposer ici un ou plusieurs documents (PDF, Excel, Word, CSV…) ou cliquer pour choisir<input type="file" id="fileInput" hidden multiple></div>
+    <div id="uploadStatus" class="muted" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <b>Bibliothèque de documents</b>
+    <div class="row" style="margin:10px 0">
+      <div><label>Type</label><select id="libType"><option value="">Tous</option><option>cdc</option><option>charte_qualite</option><option>plan_controle</option><option>spec_packaging</option><option>autre</option></select></div>
+      <div><label>Statut</label><select id="libStatus"><option value="">Tous</option><option>active</option><option>pending_validation</option><option>archived</option></select></div>
+      <button class="btn sec" onclick="loadLibrary()">Filtrer</button>
+    </div>
+    <div id="libTable"></div>
+  </div>
+  <div class="card"><b>Spécifications du client</b><div id="clientTable" class="muted" style="margin-top:8px">Choisir un client puis filtrer.</div>
+    <button class="btn sec" style="margin-top:10px" onclick="loadClientTable()">Afficher la table de spécifications</button></div>
+</section>
+
+<!-- ============ OUTIL 1 : COUPLE ============ -->
+<section id="tab-couple" hidden>
+  <div class="card row">
+    <div><label>Pays</label><select id="cpPays"></select></div>
+    <div><label>Client</label><select id="cpClient"></select></div>
+    <button class="btn" onclick="loadCouple()">Tout ce qu'il faut respecter</button>
+  </div>
+  <div class="card"><div id="coupleTable" class="muted">Exigences pays + exigences client fusionnées, triées par section.</div></div>
+</section>
+
+<!-- ============ OUTIL 2 : COMPARATEUR ============ -->
+<section id="tab-compare" hidden>
+  <div class="card">
+    <div class="muted" style="margin-bottom:8px">2 ou 3 cibles. Une cible = un pays, un client, ou un couple pays+client.</div>
+    <div class="row" id="cmpTargets"></div>
+    <div style="margin-top:10px">
+      <button class="btn sec" onclick="addTarget()">+ cible</button>
+      <button class="btn" onclick="runCompare()">Comparer</button>
+    </div>
+  </div>
+  <div class="card"><div id="cmpTable"></div></div>
+</section>
+
+<!-- ============ VALIDATION QUALITÉ ============ -->
+<section id="tab-validation" hidden>
+  <div class="card">
+    <b>Exigences en attente de validation</b>
+    <div class="muted">Workflow : scan IA → proposition → validation → consultable. Rien n'est actif sans validation.</div>
+    <div style="margin:10px 0"><input type="text" id="validator" placeholder="Votre nom (validateur)">
+      <button class="btn" onclick="decide('approve')">Valider la sélection</button>
+      <button class="btn sec" onclick="decide('reject')">Rejeter la sélection</button></div>
+    <div id="pendingTable"></div>
+  </div>
+</section>
+
+<!-- ============ APPELLATIONS (3e niveau : AOC/IGP) ============ -->
+<section id="tab-appellations" hidden>
+  <div class="card">
+    <div class="muted" style="margin-bottom:8px">Cahiers des charges AOC/IGP (hors Loire/Alsace). Liste synchronisée depuis le jeu de données officiel INAO — chaque lien de cahier des charges doit être confirmé manuellement avant toute extraction : rien n'est deviné ni auto-activé.</div>
+    <div class="row">
+      <button class="btn" onclick="syncAppellations()">⟳ Synchroniser la liste (INAO)</button>
+      <div><label>Statut</label><select id="apStatus" onchange="loadAppellations()"><option value="pending_link">À lier</option><option value="active">Actives</option><option value="excluded">Exclues</option><option value="">Toutes</option></select></div>
+    </div>
+    <div id="apSyncStatus" class="muted" style="margin-top:8px"></div>
+  </div>
+  <div class="card"><div id="apTable" class="muted">Charge la liste ci-dessus.</div></div>
+  <div class="card"><b>Table de spécifications d'une appellation</b>
+    <div class="row" style="margin:10px 0"><select id="apViewSel"></select>
+      <button class="btn sec" onclick="loadAppellationTable()">Afficher</button></div>
+    <div id="apViewTable" class="muted">Choisir une appellation active.</div>
+  </div>
+</section>
+
+<!-- ============ ALERTES PRESSE ============ -->
+<section id="tab-alerts" hidden>
+  <div class="card">
+    <div class="muted" style="margin-bottom:8px">Presse pro / blogs spécialisés — ne modifie jamais la matrice de conformité. À toi de juger si une alerte mérite de vérifier/ajouter une source officielle.</div>
+    <div class="row">
+      <div><label>Statut</label><select id="alStatus"><option value="new">Nouvelles</option><option value="escalated">À vérifier officiellement</option><option value="reviewed">Traitées</option><option value="dismissed">Ignorées</option><option value="">Toutes</option></select></div>
+      <div><label>Pays probable</label><select id="alJur"><option value="">Tous</option><option value="EU">UE</option><option value="UK">UK</option><option value="US">USA</option></select></div>
+      <button class="btn sec" onclick="loadAlerts()">Filtrer</button>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="runAlerts()">⟳ Vérifier les flux maintenant</button>
+      <span class="muted">Auto : chaque lundi</span>
+    </div>
+  </div>
+  <div class="card"><div id="alertsTable" class="muted">Charge les alertes ci-dessus.</div></div>
+</section>
+
+<!-- ============ HORIZON (TEXTES PAS ENCORE EN VIGUEUR) ============ -->
+<section id="tab-horizon" hidden>
+  <div class="card">
+    <div class="muted" style="margin-bottom:8px">Propositions/consultations pas encore en vigueur (Federal Register US uniquement en V1 — cf. docs/SOURCES.md). Ne modifie jamais la matrice de conformité. "À intégrer" = la qualité juge qu'une vraie source doit être créée/mise à jour dès l'entrée en vigueur.</div>
+    <div class="row">
+      <div><label>Statut</label><select id="hzStatus"><option value="new">Nouveaux</option><option value="tracked">À surveiller</option><option value="escalated">À intégrer</option><option value="dismissed">Ignorés</option><option value="">Tous</option></select></div>
+      <div><label>Pays probable</label><select id="hzJur"><option value="">Tous</option><option value="EU">UE</option><option value="UK">UK</option><option value="US">USA</option><option value="FR">France</option><option value="IE">Irlande</option></select></div>
+      <button class="btn sec" onclick="loadHorizon()">Filtrer</button>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="runHorizon()">⟳ Vérifier maintenant</button>
+      <span class="muted">Auto : chaque lundi</span>
+    </div>
+  </div>
+  <div class="card"><div id="horizonTable" class="muted">Charge les éléments ci-dessus.</div></div>
+</section>
+</main>
+
+<!-- ============ MODAL CONTEXTE ============ -->
+<div id="ctxOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50" onclick="if(event.target===this)closeContext()">
+  <div style="background:#fff;max-width:560px;margin:8vh auto;border-radius:10px;padding:20px;max-height:78vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b>Contexte / interprétation</b>
+      <button class="btn sec" onclick="closeContext()" style="padding:4px 10px">✕</button>
+    </div>
+    <div id="ctxParam" class="muted" style="margin:6px 0 12px"></div>
+    <div id="ctxList"></div>
+    <button class="btn" id="ctxSearchBtn" style="margin-top:12px" onclick="runContextSearch()">🔍 Rechercher du contexte</button>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (path, opts={}) => fetch(path, { ...opts, headers: { 'content-type':'application/json', 'x-admin-key': $('#adminKey').value, ...(opts.headers||{}) } }).then(r => r.json());
+
+// --- Navigation ---
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x===b));
+  document.querySelectorAll('main section').forEach(s => s.hidden = s.id !== 'tab-'+b.dataset.tab);
+  if (b.dataset.tab === 'validation') loadPending();
+  if (b.dataset.tab === 'alerts') loadAlerts();
+  if (b.dataset.tab === 'horizon') loadHorizon();
+  if (b.dataset.tab === 'appellations') loadAppellations();
+  if (b.dataset.tab === 'client') { loadClientsAdmin(); loadLibrary(); }
+});
+
+// --- Rendu commun : table de spécifications par section (format unique) ---
+function renderTable(rows, el) {
+  if (!rows?.length) { el.innerHTML = '<span class="muted">Aucune exigence active.</span>'; return; }
+  let html = '<table><tr><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>S\'applique à</th><th>Date d\'appl.</th><th>Source</th><th></th></tr>';
+  let cur = null;
+  for (const r of rows) {
+    if (r.section !== cur) { cur = r.section; html += `<tr class="section-head"><td colspan="7">${cur}</td></tr>`; }
+    const lim = r.limit_value != null ? `${r.operator||''} ${r.limit_value} ${r.unit||''}` : (r.operator||'—');
+    const mt = r.mandatory_test === true ? ' <span class="badge" style="background:#fdecea;color:var(--accent)" title="Analyse/déclaration obligatoire, indépendamment du résultat">analyse obligatoire</span>' : '';
+    html += `<tr><td><b>${r.parameter}</b>${mt}</td><td>${r.requirement}</td><td>${lim}</td><td>${r.applies_to||'—'}</td>
+      <td>${r.effective_date||'—'}</td>
+      <td class="src">${r.source_url?`<a href="${r.source_url}" target="_blank">${r.source_name||'source'} ↗</a>`:(r.source_name||'—')}<br><span class="muted">${r.source_ref||''}</span></td>
+      <td><span class="badge ${r.confidence==='validated'?'validated':'ai'}">${r.confidence==='validated'?'validé':'IA'}</span>
+      ${r.confidence==='validated'&&r.id?` <a href="#" onclick="openContext('${r.id}','${(r.parameter||'').replace(/'/g,"\\'")}');return false" title="Rechercher du contexte">🔍</a>`:''}</td></tr>`;
+  }
+  el.innerHTML = html + '</table>';
+}
+
+// --- Veille pays ---
+let _authOk = false, _targetsInit = false;
+async function initSelectors() {
+  const [jur, clients] = await Promise.all([api('/api/query?action=jurisdictions'), api('/api/query?action=clients')]);
+  if (jur?.error || clients?.error) {
+    _authOk = false;
+    $('#authStatus').textContent = 'Clé admin refusée — vérifie la valeur.';
+    $('#authStatus').style.color = 'var(--warn)';
+    return;
+  }
+  _authOk = true;
+  $('#authStatus').textContent = '✔ connecté';
+  $('#authStatus').style.color = 'var(--ok)';
+  const jopt = jur.map(j => `<option value="${j.code}">${j.name}</option>`).join('');
+  const copt = clients.map(c => `<option value="${c.id}">${c.parent_id?'&nbsp;&nbsp;↳ ':''}${c.name}</option>`).join('');
+  ['#paysSel','#cpPays'].forEach(s => $(s).innerHTML = jopt);
+  ['#clientSel','#cpClient'].forEach(s => $(s).innerHTML = copt);
+  window._jopt = jopt; window._copt = copt;
+  document.querySelectorAll('#cmpTargets select').forEach(s => {
+    s.innerHTML = (s.id.endsWith('p') ? '<option value="">— pays —</option>' + jopt : '<option value="">— client —</option>' + copt);
+  });
+  if (!_targetsInit) { _targetsInit = true; addTarget(); addTarget(); }
+}
+$('#adminKey').addEventListener('keydown', e => { if (e.key === 'Enter') initSelectors(); });
+$('#adminKey').addEventListener('blur', () => { if ($('#adminKey').value) initSelectors(); });
+async function loadPays() { renderTable(await api(`/api/query?action=table&jurisdiction=${$('#paysSel').value}`), $('#paysTable')); }
+async function runWatch() {
+  $('#paysTable').innerHTML = 'Veille en cours… (peut prendre quelques minutes)';
+  const filter = $('#paysSourceFilter').value.trim();
+  const url = `/api/watch?trigger=manual&jurisdiction=${$('#paysSel').value}` + (filter ? `&source=${encodeURIComponent(filter)}` : '');
+  const r = await api(url, { method:'POST' });
+  $('#paysTable').innerHTML = `<b>Run terminé.</b> Sources vérifiées: ${r.sources_checked}, modifiées: ${r.changed}, exigences extraites: ${r.extracted}. ` +
+    (r.errors?.length ? `<span style="color:var(--warn)">Erreurs: ${JSON.stringify(r.errors)}</span>` : '') +
+    ' → passer par l\'onglet Validation qualité.';
+}
+
+// --- Clients (création/gestion) ---
+async function loadClientsAdmin() {
+  const rows = await api('/api/clients?action=list');
+  if (rows?.error) { $('#clientsAdminTable').innerHTML = '<span class="muted">Saisis d\'abord la clé admin.</span>'; return; }
+  $('#newClientParent').innerHTML = '<option value="">— aucun (client racine) —</option>' +
+    rows.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  $('#clientsAdminTable').innerHTML = !rows.length ? '<span class="muted">Aucun client — crée le premier ci-dessus.</span>' :
+    '<table><tr><th>Nom</th><th>Holding</th><th>Pays</th><th>Statut</th><th></th></tr>' +
+    rows.map(c => `<tr><td>${c.parent_id?'&nbsp;&nbsp;↳ ':''}<b>${c.name}</b></td><td>${c.parent?.name||'—'}</td><td>${c.country||'—'}</td>
+      <td><span class="badge">${c.active===false?'inactif':'actif'}</span></td>
+      <td><a href="#" onclick="toggleClient('${c.id}',${c.active===false});return false">${c.active===false?'réactiver':'désactiver'}</a></td></tr>`).join('') + '</table>';
+}
+async function createClient() {
+  if (!_authOk) { alert('Saisis d\'abord ta clé admin en haut de page (Entrée ou clic ailleurs pour valider — tu dois voir "✔ connecté").'); return; }
+  const name = $('#newClientName').value.trim();
+  if (!name) return;
+  const r = await api('/api/clients?action=create', { method:'POST', body: JSON.stringify({
+    name, parent_id: $('#newClientParent').value || null, country: $('#newClientCountry').value.trim() || null }) });
+  if (r?.error) { alert(r.error === 'unauthorized' ? 'Clé admin refusée par le serveur — revérifie sa valeur en haut de page.' : r.error); return; }
+  $('#newClientName').value = ''; $('#newClientCountry').value = '';
+  await loadClientsAdmin();
+  await initSelectors(); // rafraîchit les menus déroulants client (upload, couple, comparateur)
+}
+async function toggleClient(id, reactivate) {
+  await api('/api/clients?action=update', { method:'POST', body: JSON.stringify({ id, active: !!reactivate }) });
+  loadClientsAdmin();
+}
+
+// --- Veille client : upload (fichier unique ou en masse) ---
+const dz = $('#dropzone');
+dz.onclick = () => $('#fileInput').click();
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
+dz.ondragleave = () => dz.classList.remove('drag');
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); uploadMultiple(e.dataTransfer.files); };
+$('#fileInput').onchange = e => uploadMultiple(e.target.files);
+
+async function uploadMultiple(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (!$('#clientSel').value) { $('#uploadStatus').innerHTML = '<span style="color:var(--warn)">Choisis d\'abord un client.</span>'; return; }
+  const st = $('#uploadStatus');
+  st.innerHTML = '';
+  let ok = 0, ko = 0;
+  for (const [i, file] of files.entries()) {
+    const line = document.createElement('div');
+    line.textContent = `[${i+1}/${files.length}] ${file.name} — upload puis analyse IA (classification + extraction), compte 30 à 90s selon la taille du document…`;
+    st.appendChild(line);
+    try {
+      const result = await upload(file, files.length > 1);
+      if (result.error) {
+        line.innerHTML = `[${i+1}/${files.length}] <b>${file.name}</b> — <span style="color:var(--warn)">${result.error}</span>`;
+        ko++;
+      } else {
+        let extra = '';
+        if (result.extracted === 0 && result.diagnostics) {
+          const d = result.diagnostics;
+          const why = d.truncated ? 'réponse IA tronquée (document probablement trop long)' :
+                      d.parseError || d.chunks?.find(c=>c.parseError)?.parseError || 'aucune exigence détectée dans le document';
+          extra = `<br><span class="muted">→ 0 exigence : ${why}${d.ms?` (${Math.round(d.ms/1000)}s de traitement IA)`:''}` +
+                  (d.rawPreview ? ` — aperçu réponse IA : <code>${d.rawPreview.slice(0,200).replace(/</g,'&lt;')}…</code>` : '') + '</span>';
+        }
+        line.innerHTML = `[${i+1}/${files.length}] ✔ <b>${result.normalized}</b> — ${result.extracted} exigences extraites (nouvelles: ${result.staged?.new||0}, modifiées: ${result.staged?.modified||0})${extra}` +
+          (result.extracted > 0 ? ' → <a href="#" onclick="document.querySelector(\'[data-tab=validation]\').click();return false">onglet Validation qualité</a>' : '');
+        ok++;
+      }
+    } catch (e) {
+      line.innerHTML = `[${i+1}/${files.length}] <b>${file.name}</b> — <span style="color:var(--warn)">${e.message||e}</span>`;
+      ko++;
+    }
+  }
+  if (files.length > 1) {
+    const summary = document.createElement('div');
+    summary.style.marginTop = '8px';
+    summary.innerHTML = `<b>${ok}/${files.length} déposés avec succès</b>${ko ? `, ${ko} en erreur` : ''} → onglet Validation qualité.`;
+    st.prepend(summary);
+  }
+  loadLibrary();
+}
+
+// upload(file) : appelée pour un seul fichier. En dépôt multiple, le
+// "remplace un document" est désactivé (chaque fichier du lot = un
+// document indépendant, pas de sens à tous remplacer la même cible).
+async function upload(file, isBatch) {
+  if (!file) return { error: 'fichier manquant' };
+  const { path, signedUrl } = await api('/api/documents?action=upload_url', { method:'POST', body: JSON.stringify({ filename: file.name }) });
+  const up = await fetch(signedUrl, { method:'PUT', body: file });
+  if (!up.ok) return { error: 'échec upload storage' };
+  const r = await api('/api/documents?action=process', { method:'POST', body: JSON.stringify({
+    client_id: $('#clientSel').value, storage_path: path, original_filename: file.name,
+    replaces_id: isBatch ? null : ($('#replacesSel').value || null),
+    effective_date_override: $('#effDate').value || null }) });
+  return r;
+}
+async function loadLibrary() {
+  const p = new URLSearchParams({ action:'library', client_id: $('#clientSel').value });
+  if ($('#libType').value) p.set('doc_type', $('#libType').value);
+  if ($('#libStatus').value) p.set('status', $('#libStatus').value);
+  const docs = await api('/api/documents?'+p);
+  if (docs?.error) { $('#libTable').innerHTML = `<span style="color:var(--warn)">${docs.error}</span>`; return; }
+  if (!Array.isArray(docs)) { $('#libTable').innerHTML = '<span class="muted">Saisis d\'abord la clé admin.</span>'; return; }
+  $('#libTable').innerHTML = !docs.length ? '<span class="muted">Aucun document.</span>' :
+    '<table><tr><th>Fichier</th><th>Type</th><th>V</th><th>Appl.</th><th>Statut</th><th>Déposé</th><th></th></tr>' +
+    docs.map(d => `<tr><td>${d.normalized_filename}</td><td>${d.doc_type}</td><td>v${d.version}</td><td>${d.effective_date||'—'}</td>
+      <td><span class="badge">${d.status}</span></td><td>${d.uploaded_at.slice(0,10)}</td>
+      <td><a href="#" onclick="dl('${d.id}');return false">⬇</a></td></tr>`).join('') + '</table>';
+  $('#replacesSel').innerHTML = '<option value="">Non — nouveau document</option>' +
+    docs.filter(d => d.status==='active').map(d => `<option value="${d.id}">${d.normalized_filename}</option>`).join('');
+}
+async function dl(id) { const { url } = await api(`/api/documents?action=download&id=${id}`); window.open(url); }
+async function loadClientTable() { renderTable(await api(`/api/query?action=table&client_id=${$('#clientSel').value}`), $('#clientTable')); }
+
+// --- Outil 1 : couple ---
+async function loadCouple() {
+  renderTable(await api(`/api/query?action=table&jurisdiction=${$('#cpPays').value}&client_id=${$('#cpClient').value}`), $('#coupleTable'));
+}
+
+// --- Outil 2 : comparateur ---
+let nT = 0;
+function addTarget() {
+  if (nT >= 3) return;
+  const i = nT++;
+  $('#cmpTargets').insertAdjacentHTML('beforeend',
+    `<div class="card" style="margin:0"><label>Cible ${i+1}</label>
+     <select id="t${i}p"><option value="">— pays —</option>${window._jopt}</select>
+     <select id="t${i}c"><option value="">— client —</option>${window._copt}</select></div>`);
+}
+async function runCompare() {
+  const targets = [];
+  for (let i = 0; i < nT; i++) {
+    const j = $(`#t${i}p`)?.value, c = $(`#t${i}c`)?.value;
+    if (!j && !c) continue;
+    const jl = j ? $(`#t${i}p`).selectedOptions[0].text : '';
+    const cl = c ? $(`#t${i}c`).selectedOptions[0].text.replace(/↳ /,'') : '';
+    targets.push({ label: [cl, jl].filter(Boolean).join(' @ '), jurisdiction: j || undefined, client_id: c || undefined });
+  }
+  if (targets.length < 2) { $('#cmpTable').textContent = 'Choisir au moins 2 cibles.'; return; }
+  const { targets: labels, rows } = await api('/api/query?action=compare', { method:'POST', body: JSON.stringify({ targets }) });
+  let html = `<table><tr><th>Paramètre</th>${labels.map(l => `<th>${l}</th>`).join('')}</tr>`;
+  let cur = null;
+  for (const r of rows) {
+    if (r.section !== cur) { cur = r.section; html += `<tr class="section-head"><td colspan="${labels.length+1}">${cur}</td></tr>`; }
+    const cells = labels.map((_, i) => r.cells[i]);
+    const vals = cells.map(c => c ? `${c.operator||''} ${c.limit_value ?? ''} ${c.unit||''}`.trim() || '✔' : null);
+    const differ = new Set(vals.filter(v => v !== null)).size > 1;
+    html += `<tr><td><b>${r.parameter}</b></td>` + cells.map((c, i) =>
+      `<td class="diffcell ${differ?'diff':''}">${c ? `${vals[i]}<br><span class="muted">${c.requirement.slice(0,120)}</span><br><span class="src">${c.source_url?`<a target="_blank" href="${c.source_url}">${c.source_ref||'source'} ↗</a>`:(c.source_ref||'')}</span>` : '<span class="muted">absent</span>'}</td>`).join('') + '</tr>';
+  }
+  $('#cmpTable').innerHTML = html + '</table>';
+}
+
+// --- Validation ---
+async function loadPending() {
+  const rows = await api('/api/query?action=pending');
+  if (rows?.error) { $('#pendingTable').innerHTML = `<span style="color:var(--warn)">Erreur : ${rows.error}</span>`; return; }
+  if (!Array.isArray(rows)) { $('#pendingTable').innerHTML = '<span style="color:var(--warn)">Réponse inattendue du serveur — regarde la console (F12) et dis-le-moi.</span>'; return; }
+  $('#pendingTable').innerHTML = !rows.length ? '<span class="muted">Rien en attente.</span>' :
+    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th><th>Origine</th><th>Section</th><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>Réf. source</th></tr>' +
+    rows.map(r => `<tr><td><input type="checkbox" class="pk" value="${r.id}"></td>
+      <td>${r.origin==='country'?r.jurisdiction:r.origin==='appellation'?(r.appellations?.name||'appellation'):(r.clients?.name||'client')}</td><td>${r.sections?.label||r.section_id}</td>
+      <td><b>${r.parameter}</b></td><td>${r.requirement}</td>
+      <td>${r.limit_value!=null?`${r.operator||''} ${r.limit_value} ${r.unit||''}`:'—'}</td><td class="muted">${r.source_ref}</td></tr>`).join('') + '</table>';
+}
+async function decide(decision) {
+  const ids = [...document.querySelectorAll('.pk:checked')].map(c => c.value);
+  if (!ids.length) return alert('Sélectionner des lignes.');
+  await api('/api/validate', { method:'POST', body: JSON.stringify({ requirement_ids: ids, decision, validated_by: $('#validator').value || 'qualité' }) });
+  loadPending();
+}
+
+// --- Appellations (3e niveau) ---
+async function syncAppellations() {
+  $('#apSyncStatus').textContent = 'Synchronisation en cours (téléchargement + filtrage INAO)…';
+  const r = await api('/api/appellations?action=sync', { method: 'POST' });
+  if (r?.error) { $('#apSyncStatus').innerHTML = `<span style="color:var(--warn)">${r.error}</span>`; return; }
+  $('#apSyncStatus').innerHTML = `Terminé. Lignes lues: ${r.total_rows}, retenues vin: ${r.wine_rows}, ` +
+    `exclues (région): ${r.excluded_region}, appellations uniques: ${r.unique_appellations}, ` +
+    `nouvelles: ${r.created}, déjà connues: ${r.already_known}.` +
+    (r.filter_method === 'name_keyword_fallback_unreliable'
+      ? ' <b style="color:var(--warn)">⚠ Pas de colonne secteur détectée dans le fichier source — filtrage par mots-clés, moins fiable : vérifie la liste "À lier" avec attention.</b>' : '');
+  loadAppellations();
+}
+async function loadAppellations() {
+  const rows = await api(`/api/appellations?action=list&status=${$('#apStatus').value}`);
+  if (rows?.error) { $('#apTable').innerHTML = '<span class="muted">Saisis d\'abord la clé admin.</span>'; return; }
+  if (!rows.length) { $('#apTable').innerHTML = '<span class="muted">Aucune appellation dans ce statut.</span>'; return; }
+  $('#apTable').innerHTML = '<table><tr><th>Nom</th><th>Type</th><th>Région (source)</th><th>Statut</th><th>Lien cahier des charges</th><th></th></tr>' +
+    rows.map(a => `<tr><td><b>${a.name}</b></td><td>${a.wine_type||'—'}</td><td class="muted">${a.region||'—'}</td>
+      <td><span class="badge">${a.status}</span></td>
+      <td>${a.cdc_url ? `<a href="${a.cdc_url}" target="_blank">lien ↗</a>` : `<input type="text" id="cdc_${a.id}" placeholder="Coller l'URL du cahier des charges (INAO...)" style="width:260px">`}</td>
+      <td>${a.status==='pending_link'
+        ? `<button class="btn sec" style="padding:4px 10px" onclick="setCdc('${a.id}')">Confirmer le lien</button>
+           <a href="#" onclick="excludeAppellation('${a.id}');return false" style="margin-left:6px">exclure</a>`
+        : a.status==='active'
+        ? `<button class="btn sec" style="padding:4px 10px" onclick="extractAppellation('${a.id}','${a.name.replace(/'/g,"\\'")}')">Extraire</button>`
+        : ''}</td></tr>`).join('') + '</table>';
+  if ($('#apStatus').value === 'active' || $('#apStatus').value === '') {
+    $('#apViewSel').innerHTML = rows.filter(a => a.status === 'active').map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+  }
+}
+async function setCdc(id) {
+  const input = $('#cdc_' + id);
+  if (!input || !input.value) return alert('Colle une URL de cahier des charges.');
+  const r = await api('/api/appellations?action=set_cdc', { method: 'POST', body: JSON.stringify({ id, cdc_url: input.value }) });
+  if (r?.error) return alert(r.error);
+  loadAppellations();
+}
+async function excludeAppellation(id) {
+  await api('/api/appellations?action=exclude', { method: 'POST', body: JSON.stringify({ id, notes: 'exclue manuellement' }) });
+  loadAppellations();
+}
+async function extractAppellation(id, name) {
+  if (!confirm(`Extraire le cahier des charges de "${name}" ? (analyse IA, coûte quelques tokens)`)) return;
+  const r = await api('/api/appellations?action=extract', { method: 'POST', body: JSON.stringify({ id }) });
+  alert(r.error ? r.error : (r.changed ? `${r.extracted} exigences extraites → onglet Validation qualité.` : r.message));
+}
+async function loadAppellationTable() {
+  renderTable(await api(`/api/query?action=table&appellation_id=${$('#apViewSel').value}`), $('#apViewTable'));
+}
+
+// --- Alertes presse ---
+async function loadAlerts() {
+  const p = new URLSearchParams({ action: 'list' });
+  if ($('#alStatus').value) p.set('status', $('#alStatus').value);
+  if ($('#alJur').value) p.set('jurisdiction_guess', $('#alJur').value);
+  const rows = await api('/api/alerts?' + p);
+  if (rows?.error) { $('#alertsTable').innerHTML = '<span class="muted">Saisis d\'abord la clé admin.</span>'; return; }
+  $('#alertsTable').innerHTML = !rows.length ? '<span class="muted">Aucune alerte.</span>' :
+    '<table><tr><th>Date</th><th>Source</th><th>Titre / résumé</th><th>Pays</th><th>Section</th><th>Statut</th><th></th></tr>' +
+    rows.map(r => `<tr><td>${r.published_at?r.published_at.slice(0,10):'—'}</td>
+      <td>${r.press_sources?.name||'—'}</td>
+      <td><a href="${r.article_url}" target="_blank"><b>${r.title}</b> ↗</a><br><span class="muted">${r.summary||''}</span></td>
+      <td>${r.jurisdiction_guess||'—'}</td><td>${r.section_guess||'—'}</td>
+      <td><span class="badge">${r.status}</span></td>
+      <td>${r.status==='new'?`<a href="#" onclick="reviewAlert('${r.id}','escalated');return false">à vérifier</a> ·
+        <a href="#" onclick="reviewAlert('${r.id}','reviewed');return false">traité</a> ·
+        <a href="#" onclick="reviewAlert('${r.id}','dismissed');return false">ignorer</a>`:''}</td></tr>`).join('') + '</table>';
+}
+async function runAlerts() {
+  $('#alertsTable').innerHTML = 'Vérification des flux en cours…';
+  const r = await api('/api/alerts?action=run', { method: 'POST' });
+  await loadAlerts();
+  if (r?.sources_checked != null) {
+    $('#alertsTable').insertAdjacentHTML('afterbegin',
+      `<div class="muted" style="margin-bottom:8px">Flux vérifiés: ${r.sources_checked}, nouveaux articles: ${r.new_items}, pertinents: ${r.relevant}.</div>`);
+  }
+}
+async function reviewAlert(id, status) {
+  await api('/api/alerts?action=review', { method: 'POST', body: JSON.stringify({ id, status, reviewed_by: $('#validator')?.value || 'qualité' }) });
+  loadAlerts();
+}
+
+// --- Horizon (textes pas encore en vigueur) ---
+async function loadHorizon() {
+  const p = new URLSearchParams({ action: 'list' });
+  if ($('#hzStatus').value) p.set('status', $('#hzStatus').value);
+  if ($('#hzJur').value) p.set('jurisdiction_guess', $('#hzJur').value);
+  const rows = await api('/api/horizon?' + p);
+  if (rows?.error) { $('#horizonTable').innerHTML = '<span class="muted">Saisis d\'abord la clé admin.</span>'; return; }
+  $('#horizonTable').innerHTML = !rows.length ? '<span class="muted">Aucun élément.</span>' :
+    '<table><tr><th>Détecté</th><th>Échéance</th><th>Source</th><th>Titre / résumé</th><th>Pays</th><th>Section</th><th>Stade</th><th>Statut</th><th></th></tr>' +
+    rows.map(r => `<tr><td>${r.fetched_at?r.fetched_at.slice(0,10):'—'}</td>
+      <td>${r.target_date||'—'}</td>
+      <td>${r.horizon_sources?.name||'—'}</td>
+      <td><a href="${r.item_url}" target="_blank"><b>${r.title}</b> ↗</a><br><span class="muted">${r.summary||''}</span></td>
+      <td>${r.jurisdiction_guess||'—'}</td><td>${r.section_guess||'—'}</td><td>${r.stage||'—'}</td>
+      <td><span class="badge">${r.status}</span></td>
+      <td>${r.status==='new'||r.status==='tracked'?`<a href="#" onclick="reviewHorizon('${r.id}','escalated');return false">à intégrer</a> ·
+        <a href="#" onclick="reviewHorizon('${r.id}','tracked');return false">surveiller</a> ·
+        <a href="#" onclick="reviewHorizon('${r.id}','dismissed');return false">ignorer</a>`:''}</td></tr>`).join('') + '</table>';
+}
+async function runHorizon() {
+  $('#horizonTable').innerHTML = 'Vérification en cours…';
+  const r = await api('/api/horizon?action=run', { method: 'POST' });
+  await loadHorizon();
+  if (r?.sources_checked != null) {
+    $('#horizonTable').insertAdjacentHTML('afterbegin',
+      `<div class="muted" style="margin-bottom:8px">Sources vérifiées: ${r.sources_checked}, nouveaux éléments: ${r.new_items}, pertinents: ${r.relevant}.</div>`);
+  }
+}
+async function reviewHorizon(id, status) {
+  await api('/api/horizon?action=review', { method: 'POST', body: JSON.stringify({ id, status, reviewed_by: $('#validator')?.value || 'qualité' }) });
+  loadHorizon();
+}
+
+// --- Contexte à la demande ---
+let _ctxReqId = null;
+async function openContext(id, paramLabel) {
+  _ctxReqId = id;
+  $('#ctxParam').textContent = paramLabel;
+  $('#ctxList').innerHTML = 'Chargement…';
+  $('#ctxOverlay').style.display = 'block';
+  const rows = await api(`/api/context?action=list&requirement_id=${id}`);
+  renderCtxList(rows);
+}
+function renderCtxList(rows) {
+  $('#ctxList').innerHTML = (!rows || rows.error || !rows.length)
+    ? '<span class="muted">Aucun contexte enregistré pour l\'instant.</span>'
+    : rows.map(c => `<div style="border-bottom:1px solid var(--line);padding:8px 0">
+        <div>${c.note}</div>
+        <div class="src"><a href="${c.source_url}" target="_blank">${c.context_sources?.name||'source'} ↗</a> ${c.source_ref?`— ${c.source_ref}`:''}</div>
+      </div>`).join('');
+}
+async function runContextSearch() {
+  $('#ctxSearchBtn').textContent = 'Recherche en cours…';
+  $('#ctxSearchBtn').disabled = true;
+  const r = await api('/api/context?action=search', { method: 'POST', body: JSON.stringify({ requirement_id: _ctxReqId, requested_by: $('#validator')?.value || 'qualité' }) });
+  $('#ctxSearchBtn').textContent = '🔍 Rechercher du contexte';
+  $('#ctxSearchBtn').disabled = false;
+  if (r?.error) { alert(r.error); return; }
+  renderCtxList(r.results || []);
+}
+function closeContext() { $('#ctxOverlay').style.display = 'none'; _ctxReqId = null; }
+
+// Pas d'appel automatique au chargement : il faut d'abord saisir la clé
+// admin (champ en haut à droite) puis Entrée, sinon les listes restent vides.
+</script>
+</body>
+</html>
