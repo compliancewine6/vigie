@@ -5,7 +5,17 @@ import { db, requireAdmin } from '../lib/db.js';
 export default async function handler(req, res) {
   if (!requireAdmin(req, res)) return;
   const { requirement_ids, decision, validated_by, edits } = req.body;
-  // decision: 'approve' | 'reject' ; edits: corrections manuelles optionnelles {id: {champ: valeur}}
+  // decision: 'approve' | 'reject' | absent (= sauvegarde d'édition seule, sans changer le statut)
+  // edits: corrections manuelles optionnelles {id: {champ: valeur}}
+
+  // Nom du validateur obligatoire pour toute action qui touche à une exigence
+  // (validation, rejet, ou simple correction manuelle) — traçabilité qualité.
+  if (!validated_by || !String(validated_by).trim()) {
+    return res.status(400).json({ error: 'Nom du validateur requis avant toute modification, validation ou rejet.' });
+  }
+  if (!Array.isArray(requirement_ids) || !requirement_ids.length) {
+    return res.status(400).json({ error: 'requirement_ids requis' });
+  }
 
   const results = [];
   for (const id of requirement_ids) {
@@ -27,10 +37,12 @@ export default async function handler(req, res) {
         status: 'active', confidence: 'validated',
         validated_by, validated_at: new Date().toISOString()
       }).eq('id', id);
-    } else {
+      await db.from('change_log').update({ reviewed: true, reviewed_by: validated_by }).eq('requirement_id', id);
+    } else if (decision === 'reject') {
       await db.from('requirements').update({ status: 'rejected', validated_by }).eq('id', id);
+      await db.from('change_log').update({ reviewed: true, reviewed_by: validated_by }).eq('requirement_id', id);
     }
-    await db.from('change_log').update({ reviewed: true, reviewed_by: validated_by }).eq('requirement_id', id);
+    // decision absent : édition seule (correction manuelle des colonnes), le statut ne bouge pas.
     results.push(id);
   }
 
@@ -43,5 +55,5 @@ export default async function handler(req, res) {
     if (count === 0) await db.from('client_documents').update({ status: 'active' }).eq('id', d.id);
   }
 
-  res.json({ processed: results.length, decision });
+  res.json({ processed: results.length, decision: decision || 'save' });
 }

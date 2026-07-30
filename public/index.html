@@ -38,6 +38,12 @@
   .stage-logistique { background:#fdecea; color:#a13a2a; }
   .stage-administratif { background:#ececec; color:#5a5347; }
   .stage-none { background:#f5f3ef; color:#a89f92; }
+  /* Champs d'édition compacts insérés dans les cellules de la table de
+     validation qualité — plus petits que les inputs des formulaires du
+     haut de page, sinon la table déborde largement. */
+  .cell-input { min-width:0; width:100%; padding:4px 6px; font-size:12.5px; }
+  td.editcell { min-width:90px; }
+  #pendingTable table { font-size:12.5px; }
   .diffcell.diff { background:#fdecea; }
   #dropzone { border:2px dashed var(--line); border-radius:10px; padding:34px; text-align:center; color:#8b8175; cursor:pointer; }
   #dropzone.drag { border-color:var(--accent); background:#fdf7f8; }
@@ -245,6 +251,28 @@ function stageBadge(stage) {
 }
 document.querySelectorAll('#paysStage, #clientStage, #cpStage').forEach(s => s.innerHTML = stageOptions());
 
+// --- Sections (les 12 catégories connues côté DB) — pour l'édition en Validation qualité ---
+const SECTION_LABELS = {
+  analytique: 'Analytique/contaminants', composes: 'Composés/additifs', microbiologie: 'Microbiologie',
+  allergenes: 'Allergènes', etiquetage: 'Étiquetage', packaging: 'Emballage/matériaux',
+  certifications: 'Certifications', documents: 'Documents/traçabilité', import: 'Import/douane',
+  taxes: 'Fiscalité', rse: 'RSE', pricing: 'Prix/commercialisation'
+};
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+function sectionSelect(id, current) {
+  return `<select id="${id}" class="cell-input">` + Object.entries(SECTION_LABELS)
+    .map(([v, l]) => `<option value="${v}" ${v === current ? 'selected' : ''}>${l}</option>`).join('') + '</select>';
+}
+function stageSelect(id, current) {
+  return `<select id="${id}" class="cell-input"><option value="" ${!current ? 'selected' : ''}>—</option>` +
+    Object.entries(STAGE_LABELS).map(([v, l]) => `<option value="${v}" ${v === current ? 'selected' : ''}>${l}</option>`).join('') + '</select>';
+}
+function mtSelect(id, current) {
+  const cur = current === true ? 'true' : current === false ? 'false' : '';
+  const opts = [['', '—'], ['true', 'obligatoire'], ['false', 'non obligatoire']];
+  return `<select id="${id}" class="cell-input">` + opts.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('') + '</select>';
+}
+
 // --- Rendu commun : table de spécifications par section (format unique) ---
 function renderTable(rows, el) {
   if (!rows?.length) { el.innerHTML = '<span class="muted">Aucune exigence active.</span>'; return; }
@@ -280,7 +308,11 @@ async function initSelectors() {
   const jopt = jur.map(j => `<option value="${j.code}">${j.name}</option>`).join('');
   const copt = clients.map(c => `<option value="${c.id}">${c.parent_id?'&nbsp;&nbsp;↳ ':''}${c.name}</option>`).join('');
   ['#paysSel','#cpPays'].forEach(s => $(s).innerHTML = jopt);
-  ['#clientSel','#cpClient'].forEach(s => $(s).innerHTML = copt);
+  $('#cpClient').innerHTML = copt;
+  // Dépôt de document : jamais de client pré-sélectionné par défaut (sinon on
+  // dépose silencieusement sous le 1er client de la liste par erreur) —
+  // l'option vide force un choix explicite, cf. garde-fous sur le dropzone.
+  $('#clientSel').innerHTML = '<option value="">— choisir un client —</option>' + copt;
   window._jopt = jopt; window._copt = copt;
   document.querySelectorAll('#cmpTargets select').forEach(s => {
     s.innerHTML = (s.id.endsWith('p') ? '<option value="">— pays —</option>' + jopt : '<option value="">— client —</option>' + copt);
@@ -329,17 +361,26 @@ async function toggleClient(id, reactivate) {
 }
 
 // --- Veille client : upload (fichier unique ou en masse) ---
+// Client obligatoire AVANT tout dépôt : on bloque dès le clic/drop plutôt
+// que de laisser choisir un fichier pour échouer après coup (et aucun
+// client n'est présélectionné dans le menu, cf. initSelectors()).
 const dz = $('#dropzone');
-dz.onclick = () => $('#fileInput').click();
+function clientChosenOrWarn() {
+  if ($('#clientSel').value) return true;
+  $('#uploadStatus').innerHTML = '<span style="color:var(--warn)">Choisis d\'abord un client avant de déposer un document.</span>';
+  $('#clientSel').focus();
+  return false;
+}
+dz.onclick = () => { if (clientChosenOrWarn()) $('#fileInput').click(); };
 dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
 dz.ondragleave = () => dz.classList.remove('drag');
-dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); uploadMultiple(e.dataTransfer.files); };
-$('#fileInput').onchange = e => uploadMultiple(e.target.files);
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (clientChosenOrWarn()) uploadMultiple(e.dataTransfer.files); };
+$('#fileInput').onchange = e => { if (clientChosenOrWarn()) uploadMultiple(e.target.files); };
 
 async function uploadMultiple(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
-  if (!$('#clientSel').value) { $('#uploadStatus').innerHTML = '<span style="color:var(--warn)">Choisis d\'abord un client.</span>'; return; }
+  if (!clientChosenOrWarn()) return;
   const st = $('#uploadStatus');
   st.innerHTML = '';
   let ok = 0, ko = 0;
@@ -455,22 +496,71 @@ async function runCompare() {
 }
 
 // --- Validation ---
+function requireValidator() {
+  if (!$('#validator').value.trim()) {
+    alert('Indique ton nom de validateur avant toute modification, validation ou rejet.');
+    $('#validator').focus();
+    return false;
+  }
+  return true;
+}
+function pendingRow(r) {
+  const origin = r.origin === 'country' ? r.jurisdiction
+    : r.origin === 'appellation' ? (r.appellations?.name || 'appellation')
+    : (r.clients?.name || 'client');
+  const srcBtn = r.document_id
+    ? `<a href="#" onclick="dl('${r.document_id}');return false" title="Ouvrir le document source">📄</a>`
+    : (r.source_url ? `<a href="${r.source_url}" target="_blank" title="Ouvrir la source">📄</a>` : '<span class="muted">—</span>');
+  return `<tr>
+    <td><input type="checkbox" class="pk" value="${r.id}"></td>
+    <td>${origin}</td>
+    <td class="editcell">${sectionSelect(`e_sec_${r.id}`, r.section_id)}</td>
+    <td class="editcell">${stageSelect(`e_stage_${r.id}`, r.process_stage)}</td>
+    <td class="editcell"><input class="cell-input" id="e_param_${r.id}" value="${esc(r.parameter)}"></td>
+    <td class="editcell"><input class="cell-input" id="e_req_${r.id}" value="${esc(r.requirement)}" style="min-width:240px"></td>
+    <td class="editcell"><input class="cell-input" id="e_op_${r.id}" value="${esc(r.operator || '')}" style="width:60px"></td>
+    <td class="editcell"><input class="cell-input" id="e_lim_${r.id}" value="${r.limit_value ?? ''}" style="width:60px"></td>
+    <td class="editcell"><input class="cell-input" id="e_unit_${r.id}" value="${esc(r.unit || '')}" style="width:50px"></td>
+    <td class="editcell"><input class="cell-input" id="e_appl_${r.id}" value="${esc(r.applies_to || '')}" style="width:90px"></td>
+    <td class="editcell"><input class="cell-input" id="e_ref_${r.id}" value="${esc(r.source_ref || '')}" style="min-width:140px"></td>
+    <td class="editcell"><input type="date" class="cell-input" id="e_date_${r.id}" value="${r.effective_date || ''}"></td>
+    <td class="editcell">${mtSelect(`e_mt_${r.id}`, r.mandatory_test)}</td>
+    <td>${srcBtn}</td>
+    <td><button class="btn sec" style="padding:4px 8px;font-size:12px" onclick="saveEdit('${r.id}')" title="Enregistrer les modifications de cette ligne">💾</button></td>
+  </tr>`;
+}
 async function loadPending() {
   const rows = await api('/api/query?action=pending');
   if (rows?.error) { $('#pendingTable').innerHTML = `<span style="color:var(--warn)">Erreur : ${rows.error}</span>`; return; }
   if (!Array.isArray(rows)) { $('#pendingTable').innerHTML = '<span style="color:var(--warn)">Réponse inattendue du serveur — regarde la console (F12) et dis-le-moi.</span>'; return; }
   $('#pendingTable').innerHTML = !rows.length ? '<span class="muted">Rien en attente.</span>' :
-    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th><th>Origine</th><th>Section</th><th>Stade</th><th>Paramètre</th><th>Exigence</th><th>Limite</th><th>Réf. source</th></tr>' +
-    rows.map(r => `<tr><td><input type="checkbox" class="pk" value="${r.id}"></td>
-      <td>${r.origin==='country'?r.jurisdiction:r.origin==='appellation'?(r.appellations?.name||'appellation'):(r.clients?.name||'client')}</td><td>${r.sections?.label||r.section_id}</td>
-      <td>${stageBadge(r.process_stage)}</td>
-      <td><b>${r.parameter}</b></td><td>${r.requirement}</td>
-      <td>${r.limit_value!=null?`${r.operator||''} ${r.limit_value} ${r.unit||''}`:'—'}</td><td class="muted">${r.source_ref}</td></tr>`).join('') + '</table>';
+    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th>' +
+    '<th>Origine</th><th>Section</th><th>Stade</th><th>Paramètre</th><th>Exigence</th><th>Opér.</th><th>Limite</th>' +
+    '<th>Unité</th><th>S\'applique à</th><th>Réf. source</th><th>Date appl.</th><th>Analyse obl.</th><th>Doc</th><th></th></tr>' +
+    rows.map(pendingRow).join('') + '</table>';
 }
 async function decide(decision) {
+  if (!requireValidator()) return;
   const ids = [...document.querySelectorAll('.pk:checked')].map(c => c.value);
   if (!ids.length) return alert('Sélectionner des lignes.');
-  await api('/api/validate', { method:'POST', body: JSON.stringify({ requirement_ids: ids, decision, validated_by: $('#validator').value || 'qualité' }) });
+  const r = await api('/api/validate', { method:'POST', body: JSON.stringify({ requirement_ids: ids, decision, validated_by: $('#validator').value.trim() }) });
+  if (r?.error) { alert(r.error); return; }
+  loadPending();
+}
+async function saveEdit(id) {
+  if (!requireValidator()) return;
+  const v = f => $(`#e_${f}_${id}`)?.value;
+  const lim = v('lim'), mt = v('mt');
+  const edits = {
+    section_id: v('sec'), process_stage: v('stage') || null,
+    parameter: v('param'), requirement: v('req'),
+    operator: v('op') || null, limit_value: lim === '' ? null : Number(lim),
+    unit: v('unit') || null, applies_to: v('appl') || null,
+    source_ref: v('ref'), effective_date: v('date') || null,
+    mandatory_test: mt === '' ? null : mt === 'true'
+  };
+  const r = await api('/api/validate', { method:'POST', body: JSON.stringify({ requirement_ids: [id], edits: { [id]: edits }, validated_by: $('#validator').value.trim() }) });
+  if (r?.error) { alert(r.error); return; }
   loadPending();
 }
 
