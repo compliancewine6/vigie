@@ -449,9 +449,22 @@ async function loadLibrary() {
     '<table><tr><th>Fichier</th><th>Type</th><th>V</th><th>Appl.</th><th>Statut</th><th>Déposé</th><th></th></tr>' +
     docs.map(d => `<tr><td>${d.normalized_filename}</td><td>${d.doc_type}</td><td>v${d.version}</td><td>${d.effective_date||'—'}</td>
       <td><span class="badge">${d.status}</span></td><td>${d.uploaded_at.slice(0,10)}</td>
-      <td><a href="#" onclick="dl('${d.id}');return false">⬇</a></td></tr>`).join('') + '</table>';
+      <td><a href="#" onclick="dl('${d.id}');return false" title="Télécharger">⬇</a>
+      ${d.status!=='archived'?` <a href="#" onclick="archiveDoc('${d.id}');return false" title="Archiver (n'affecte pas les exigences déjà extraites)">📦</a>`:''}
+      <a href="#" onclick="deleteDoc('${d.id}','${(d.normalized_filename||'').replace(/'/g,"\\'")}')" style="color:var(--accent)" title="Supprimer définitivement">🗑️</a></td></tr>`).join('') + '</table>';
   $('#replacesSel').innerHTML = '<option value="">Non — nouveau document</option>' +
     docs.filter(d => d.status==='active').map(d => `<option value="${d.id}">${d.normalized_filename}</option>`).join('');
+}
+async function archiveDoc(id) {
+  const r = await api('/api/documents?action=archive', { method:'POST', body: JSON.stringify({ id }) });
+  if (r?.error) { alert(r.error); return; }
+  loadLibrary();
+}
+async function deleteDoc(id, name) {
+  if (!confirm(`Supprimer définitivement "${name}" ? Les exigences non validées issues de ce document seront supprimées avec lui. Action irréversible — préfère "Archiver" si tu veux juste le sortir de la liste active.`)) return;
+  const r = await api('/api/documents?action=delete', { method:'POST', body: JSON.stringify({ id }) });
+  if (r?.error) { alert(r.error); return; }
+  loadLibrary();
 }
 async function dl(id) { const { url } = await api(`/api/documents?action=download&id=${id}`); window.open(url); }
 async function loadClientTable() { renderTable(await api(`/api/query?action=table&client_id=${$('#clientSel').value}&process_stage=${$('#clientStage').value}`), $('#clientTable')); }
@@ -504,40 +517,83 @@ function requireValidator() {
   }
   return true;
 }
-function pendingRow(r) {
-  const origin = r.origin === 'country' ? r.jurisdiction
-    : r.origin === 'appellation' ? (r.appellations?.name || 'appellation')
-    : (r.clients?.name || 'client');
-  const srcBtn = r.document_id
+// Vue lecture par défaut (compacte, pas de champs) ; "✏️ Modifier" bascule
+// UNE ligne en édition (avec listes déroulantes pour section/stade, comme
+// demandé — le reste en champs texte) sans recharger le réseau.
+let _pendingRows = [];
+let _editingId = null;
+function srcLink(r) {
+  return r.document_id
     ? `<a href="#" onclick="dl('${r.document_id}');return false" title="Ouvrir le document source">📄</a>`
     : (r.source_url ? `<a href="${r.source_url}" target="_blank" title="Ouvrir la source">📄</a>` : '<span class="muted">—</span>');
+}
+function originLabel(r) {
+  return r.origin === 'country' ? r.jurisdiction
+    : r.origin === 'appellation' ? (r.appellations?.name || 'appellation')
+    : (r.clients?.name || 'client');
+}
+function pendingRowRead(r) {
+  const lim = r.limit_value != null ? `${r.operator||''} ${r.limit_value} ${r.unit||''}` : (r.operator||'—');
   return `<tr>
     <td><input type="checkbox" class="pk" value="${r.id}"></td>
-    <td>${origin}</td>
+    <td>${originLabel(r)}</td>
+    <td>${r.sections?.label || r.section_id}</td>
+    <td>${stageBadge(r.process_stage)}</td>
+    <td><b>${r.parameter}</b></td>
+    <td>${r.requirement}</td>
+    <td>${lim}</td>
+    <td class="muted">${r.source_ref||''}${r.applies_to?`<br>${r.applies_to}`:''}</td>
+    <td>${srcLink(r)}</td>
+    <td><button class="btn sec" style="padding:4px 8px;font-size:12px" onclick="toggleEdit('${r.id}')" title="Modifier cette exigence">✏️</button></td>
+  </tr>`;
+}
+function pendingRowEdit(r) {
+  return `<tr style="background:#fdf9f0">
+    <td><input type="checkbox" class="pk" value="${r.id}"></td>
+    <td>${originLabel(r)}</td>
     <td class="editcell">${sectionSelect(`e_sec_${r.id}`, r.section_id)}</td>
     <td class="editcell">${stageSelect(`e_stage_${r.id}`, r.process_stage)}</td>
     <td class="editcell"><input class="cell-input" id="e_param_${r.id}" value="${esc(r.parameter)}"></td>
-    <td class="editcell"><input class="cell-input" id="e_req_${r.id}" value="${esc(r.requirement)}" style="min-width:240px"></td>
-    <td class="editcell"><input class="cell-input" id="e_op_${r.id}" value="${esc(r.operator || '')}" style="width:60px"></td>
-    <td class="editcell"><input class="cell-input" id="e_lim_${r.id}" value="${r.limit_value ?? ''}" style="width:60px"></td>
-    <td class="editcell"><input class="cell-input" id="e_unit_${r.id}" value="${esc(r.unit || '')}" style="width:50px"></td>
-    <td class="editcell"><input class="cell-input" id="e_appl_${r.id}" value="${esc(r.applies_to || '')}" style="width:90px"></td>
-    <td class="editcell"><input class="cell-input" id="e_ref_${r.id}" value="${esc(r.source_ref || '')}" style="min-width:140px"></td>
-    <td class="editcell"><input type="date" class="cell-input" id="e_date_${r.id}" value="${r.effective_date || ''}"></td>
-    <td class="editcell">${mtSelect(`e_mt_${r.id}`, r.mandatory_test)}</td>
-    <td>${srcBtn}</td>
-    <td><button class="btn sec" style="padding:4px 8px;font-size:12px" onclick="saveEdit('${r.id}')" title="Enregistrer les modifications de cette ligne">💾</button></td>
+    <td class="editcell"><input class="cell-input" id="e_req_${r.id}" value="${esc(r.requirement)}" style="min-width:220px"></td>
+    <td class="editcell">
+      <input class="cell-input" id="e_op_${r.id}" value="${esc(r.operator||'')}" placeholder="opér." style="width:50px">
+      <input class="cell-input" id="e_lim_${r.id}" value="${r.limit_value ?? ''}" placeholder="limite" style="width:55px">
+      <input class="cell-input" id="e_unit_${r.id}" value="${esc(r.unit||'')}" placeholder="unité" style="width:45px">
+    </td>
+    <td class="editcell">
+      <input class="cell-input" id="e_ref_${r.id}" value="${esc(r.source_ref||'')}" placeholder="réf. source" style="min-width:120px">
+      <input class="cell-input" id="e_appl_${r.id}" value="${esc(r.applies_to||'')}" placeholder="s'applique à" style="width:90px;margin-top:3px">
+    </td>
+    <td class="editcell">
+      <input type="date" class="cell-input" id="e_date_${r.id}" value="${r.effective_date||''}">
+      ${mtSelect(`e_mt_${r.id}`, r.mandatory_test)}
+    </td>
+    <td>${srcLink(r)}</td>
+    <td style="white-space:nowrap">
+      <button class="btn" style="padding:4px 8px;font-size:12px" onclick="saveEdit('${r.id}')" title="Enregistrer">💾</button>
+      <button class="btn sec" style="padding:4px 8px;font-size:12px" onclick="toggleEdit('${r.id}')" title="Annuler">✕</button>
+    </td>
   </tr>`;
+}
+function toggleEdit(id) {
+  _editingId = _editingId === id ? null : id;
+  renderPendingTable();
+}
+function renderPendingTable() {
+  if (!_pendingRows.length) { $('#pendingTable').innerHTML = '<span class="muted">Rien en attente.</span>'; return; }
+  $('#pendingTable').innerHTML =
+    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th>' +
+    '<th>Origine</th><th>Section</th><th>Stade</th><th>Paramètre</th><th>Exigence</th><th>Limite</th>' +
+    '<th>Réf. / applique à</th><th>Doc</th><th></th></tr>' +
+    _pendingRows.map(r => r.id === _editingId ? pendingRowEdit(r) : pendingRowRead(r)).join('') + '</table>';
 }
 async function loadPending() {
   const rows = await api('/api/query?action=pending');
-  if (rows?.error) { $('#pendingTable').innerHTML = `<span style="color:var(--warn)">Erreur : ${rows.error}</span>`; return; }
-  if (!Array.isArray(rows)) { $('#pendingTable').innerHTML = '<span style="color:var(--warn)">Réponse inattendue du serveur — regarde la console (F12) et dis-le-moi.</span>'; return; }
-  $('#pendingTable').innerHTML = !rows.length ? '<span class="muted">Rien en attente.</span>' :
-    '<table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.pk\').forEach(c=>c.checked=this.checked)"></th>' +
-    '<th>Origine</th><th>Section</th><th>Stade</th><th>Paramètre</th><th>Exigence</th><th>Opér.</th><th>Limite</th>' +
-    '<th>Unité</th><th>S\'applique à</th><th>Réf. source</th><th>Date appl.</th><th>Analyse obl.</th><th>Doc</th><th></th></tr>' +
-    rows.map(pendingRow).join('') + '</table>';
+  if (rows?.error) { _pendingRows = []; $('#pendingTable').innerHTML = `<span style="color:var(--warn)">Erreur : ${rows.error}</span>`; return; }
+  if (!Array.isArray(rows)) { _pendingRows = []; $('#pendingTable').innerHTML = '<span style="color:var(--warn)">Réponse inattendue du serveur — regarde la console (F12) et dis-le-moi.</span>'; return; }
+  _pendingRows = rows;
+  _editingId = null;
+  renderPendingTable();
 }
 async function decide(decision) {
   if (!requireValidator()) return;

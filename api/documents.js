@@ -105,5 +105,55 @@ export default async function handler(req, res) {
     return res.json({ url: data.signedUrl });
   }
 
+  // 5) Archiver un document (statut seul, ne touche à aucune exigence —
+  // réversible en pratique via un nouveau dépôt "remplace ce document")
+  if (action === 'archive' && req.method === 'POST') {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'id requis' });
+    const { error } = await db.from('client_documents').update({ status: 'archived' }).eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ archived: id });
+  }
+
+  // 6) Suppression complète d'un document — irréversible, contrairement à
+  // l'archivage. Bloquée si des exigences ISSUES de ce document sont déjà
+  // 'active' (validées, en vigueur) : on ne perd jamais silencieusement une
+  // exigence de conformité en vigueur, cf. principe "jamais d'auto-merge/
+  // auto-suppression" appliqué partout ailleurs dans l'outil. Dans ce cas,
+  // il faut d'abord rejeter/dévalider ces exigences, ou archiver le document.
+  if (action === 'delete' && req.method === 'POST') {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'id requis' });
+    const { data: doc, error: eDoc } = await db.from('client_documents').select('*').eq('id', id).single();
+    if (eDoc || !doc) return res.status(404).json({ error: 'document introuvable' });
+
+    const { count: activeCount, error: eCount } = await db.from('requirements')
+      .select('id', { count: 'exact', head: true }).eq('document_id', id).eq('status', 'active');
+    if (eCount) return res.status(500).json({ error: eCount.message });
+    if (activeCount > 0) {
+      return res.status(400).json({
+        error: `Suppression impossible : ${activeCount} exigence(s) validée(s)/active(s) sont issues de ce document. ` +
+          `Rejette-les d'abord dans Validation qualité, ou archive le document au lieu de le supprimer.`
+      });
+    }
+
+    // Exigences non actives (pending_validation, rejected, superseded) issues
+    // de ce doc -> supprimées avec lui (change_log associé part en cascade
+    // via la FK requirement_id ON DELETE CASCADE).
+    const { error: eReq } = await db.from('requirements').delete().eq('document_id', id);
+    if (eReq) return res.status(500).json({ error: eReq.message });
+    // Lignes de change_log qui référencent le document mais pas (ou plus)
+    // une exigence précise (ex: entrée 'removed' sans requirement_id).
+    await db.from('change_log').delete().eq('document_id', id).is('requirement_id', null);
+    // Une version plus récente qui "remplace" ce document ne doit pas
+    // pointer vers un id supprimé.
+    await db.from('client_documents').update({ replaces_id: null }).eq('replaces_id', id);
+
+    await db.storage.from('client-docs').remove([doc.storage_path]);
+    const { error: eDel } = await db.from('client_documents').delete().eq('id', id);
+    if (eDel) return res.status(500).json({ error: eDel.message });
+    return res.json({ deleted: id });
+  }
+
   res.status(400).json({ error: 'action inconnue' });
 }
